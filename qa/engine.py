@@ -45,11 +45,11 @@ def context(pages, query='', limit=22000):
         result.append(item)
     return result
 
-def llm(system, payload, schema):
+def llm(system, payload, schema, api_key=None):
     from openai import OpenAI
-    if not os.environ.get('OPENAI_API_KEY'):
-        raise ValueError('OPENAI_API_KEY 환경변수를 설정해 주세요.')
-    client = OpenAI(timeout=60, max_retries=1)
+    if not api_key and not os.environ.get('OPENAI_API_KEY'):
+        raise ValueError('본인의 API 키를 연결하거나 데모 모드를 사용해 주세요.')
+    client = OpenAI(api_key=api_key or os.environ.get('OPENAI_API_KEY'), timeout=60, max_retries=1)
     response = client.beta.chat.completions.parse(
         model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
         messages=[{'role':'system', 'content':system},
@@ -73,7 +73,7 @@ def validate_citations(question, supplied):
         question.basis = '근거 부족'
     return question
 
-def generate(pages, turns, audience='일반 학생', difficulty='보통', topic='', prompt='', demo=True):
+def generate(pages, turns, audience='일반 학생', difficulty='보통', topic='', prompt='', demo=True, api_key=None):
     if turns and not turns[-1].get('answer'):
         raise ValueError('현재 질문에 먼저 답변해 주세요.')
     if not turns and not topic:
@@ -102,7 +102,7 @@ def generate(pages, turns, audience='일반 학생', difficulty='보통', topic=
         result = Question(question=question, focus=topic or quote[:50], connection=connection,
                           basis='모델 추론', citations=[Citation(page_id=p['id'], quote=quote)])
     else:
-        result = llm(BASE_PROMPT + '\n추가 질문 생성 지침:\n' + prompt[:6000], payload, Question)
+        result = llm(BASE_PROMPT + '\n추가 질문 생성 지침:\n' + prompt[:6000], payload, Question, api_key=api_key)
     result = validate_citations(result, supplied)
     return {'question':result.model_dump(), 'answer':'', 'feedback':None, 'quality':None,
             'human_scores':{}, 'human_feedback':'', 'errors':[],
@@ -112,7 +112,7 @@ def generate(pages, turns, audience='일반 학생', difficulty='보통', topic=
             'context_ids':[p['id'] for p in supplied], 'context_chars':sum(len(p['text']) for p in supplied),
             'context_digest':hashlib.sha256(json.dumps(supplied, ensure_ascii=False).encode()).hexdigest()}
 
-def feedback(pages, turn, demo=True):
+def feedback(pages, turn, demo=True, api_key=None):
     if not turn.get('answer', '').strip():
         raise ValueError('답변을 입력해 주세요.')
     if demo:
@@ -124,7 +124,7 @@ def feedback(pages, turn, demo=True):
                  '정확성, 논리성, 근거 충분성을 따로 평가하라. 직접 확인과 추론을 구분하고 '
                  '확인 불가능하면 검토 필요로 표시하라. 모범답안을 제공하지 말라.',
                  {'documents':context(pages, turn['answer']), 'question':turn['question'],
-                  'answer':turn['answer']}, Feedback)
+                  'answer':turn['answer']}, Feedback, api_key=api_key)
     return result.model_dump()
 
 def quality(pages, turns, index, demo=True):
