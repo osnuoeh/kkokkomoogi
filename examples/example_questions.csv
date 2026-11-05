@@ -1,0 +1,3 @@
+﻿topic,material,question,source,type,answer,feedback,reference,page
+과적합과 일반화,예제_발표.pdf,검증 손실 증가가 과적합의 신호인 이유는 무엇인가요?,실제 청중 질문,원리,,,예제_참고.pdf,1
+과적합과 일반화,예제_발표.pdf,외부 데이터에서도 성능이 유지된다고 볼 수 있나요?,사전 예상질문,한계,,,,
