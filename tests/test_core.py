@@ -125,7 +125,7 @@ def test_generator_allowlist_prevents_evaluation_leakage(monkeypatch,pages):
     previous['feedback']={'reference_question':marker}
     previous['quality']={'reference_question':marker}
     previous['human_feedback']=marker
-    def fake(system,payload,schema):
+    def fake(system,payload,schema,api_key=None):
         serialized=json.dumps(payload,ensure_ascii=False)
         assert marker not in serialized and marker not in system
         assert set(payload)=={'documents','conversation','audience','difficulty','new_topic'}
@@ -138,7 +138,7 @@ def test_generator_allowlist_prevents_evaluation_leakage(monkeypatch,pages):
 def test_judge_receives_reference_only_after_generation(monkeypatch,pages):
     turns=[engine.generate(pages,[])]
     refs=[Historical(question='외부 검증의 한계는 무엇인가요?')]
-    def fake(system,payload,schema):
+    def fake(system,payload,schema,api_key=None):
         assert payload['references'][0]['question']==refs[0].question
         return Comparison(matches=[Match(reference_index=0,generated_indices=[0],status='부분적으로 다룸',concept='일반화',reason='의미 비교')],limitations='보조 평가')
     monkeypatch.setattr(evaluation,'llm',fake)
@@ -187,7 +187,7 @@ def test_reports_and_csv_formula_safety(pages):
 
 def test_api_missing_key(monkeypatch):
     monkeypatch.delenv('OPENAI_API_KEY',raising=False)
-    with pytest.raises(ValueError,match='OPENAI_API_KEY'):
+    with pytest.raises(ValueError,match='API 키'):
         engine.llm('s',{},Question)
 
 def test_openai_sdk_structured_adapter_with_mock_transport(monkeypatch):

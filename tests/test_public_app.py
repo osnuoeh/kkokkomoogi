@@ -24,11 +24,11 @@ def test_public_demo_qa_without_personal_key():
     assert len(at.session_state["runs"][0]["turns"]) == 2
     assert not at.exception
 
-def test_api_mode_requires_user_key_and_does_not_use_server_key(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "should-not-be-used")
+def test_server_key_alone_does_not_enable_paid_requests(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "should-not-be-used-without-opt-in")
     at = AppTest.from_file(str(APP), default_timeout=20).run()
     press(at, "예제 자료로 체험").click().run()
-    next(x for x in at.radio if x.label == "연습 방식").set_value("내 OpenAI API 키로 AI 연습").run()
-    assert at.session_state["api_key"] == ""
-    assert press(at, "연습 시작 · 첫 질문").disabled
+    press(at, "연습 시작 · 첫 질문").click().run()
+    assert at.session_state["runs"][0]["turns"][0]["mode"] == '데모'
+    assert not at.radio and not at.sidebar.text_input
     assert not at.exception
