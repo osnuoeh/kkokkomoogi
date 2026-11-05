@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from . import engine, evaluation
 from .documents import validate_size
 from .models import Page
-from .gemini_provider import current as gemini_scope
 
 
 class AnswerStep(BaseModel):
@@ -63,9 +62,7 @@ def execute_suite(pages, references, prompt_before, prompt_after, repeats=2,
                  'holdout_hash': digest([r.model_dump() for r in frozen_refs]),
                  'scenario_hash': digest([s.model_dump() for s in steps]),
                  'audience': audience, 'difficulty': difficulty, 'demo': demo,
-                 'provider':'Gemini' if gemini_scope.get() else 'OpenAI',
-                 'model': '규칙 기반' if demo else gemini_scope.get().model if gemini_scope.get() else os.getenv('OPENAI_MODEL','gpt-4o-mini'),
-                 'visual_pages':[(i.page_id,hashlib.sha256(i.data).hexdigest()) for i in gemini_scope.get().images] if gemini_scope.get() else [],
+                 'model': '규칙 기반' if demo else os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
                  'engine_hash': hashlib.sha256(inspect.getsource(engine).encode()).hexdigest(),
                  'repeats': repeats, 'answers_per_run': len(steps)}
     suite = {'purpose': '개발자 오프라인 보조 평가 — 실제 사용자 품질 결과 아님',
