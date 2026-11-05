@@ -8,8 +8,13 @@ def snapshot(pages, runs):
         turns = []
         for turn in run['turns']:
             turns.append({k: turn.get(k) for k in (
-                'question', 'answer', 'feedback', 'feedback_mode', 'mode', 'model',
-                'audience', 'difficulty', 'prompt_version')})
+                'question', 'answer', 'feedback', 'feedback_mode', 'mode',
+                'audience', 'difficulty')})
+        for turn in turns:
+            feedback_mode = turn.get('feedback_mode') or turn['mode']
+            turn['mode'] = 'AI' if turn['mode'] == 'OpenAI' else '규칙 기반 체험 (실제 AI 아님)'
+            if turn['feedback']:
+                turn['feedback_mode'] = 'AI 보조 피드백' if feedback_mode == 'OpenAI' else '규칙 기반 체험 피드백'
         safe_runs.append({'name': run['name'], 'data_label': run.get('data_label') or '사용자 Q&A 기록', 'turns': turns})
     return {'schema_version': 2, 'purpose': '사용자 Q&A 연습 기록',
             'documents': [{'file': p.file, 'role': p.role, 'number': p.number, 'kind': p.kind}

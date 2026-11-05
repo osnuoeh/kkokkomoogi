@@ -23,7 +23,8 @@ def assert_public_only(at):
     labels = [getattr(x, 'label', '') for group in
               [at.button, at.text_area, at.text_input, at.selectbox, at.get('file_uploader'), at.get('download_button')]
               for x in group]
-    forbidden = ['과거 질문', '평가', '프롬프트', '실험', '시나리오', '개발자', '디버깅']
+    forbidden = ['과거 질문', '평가', '프롬프트', '실험', '시나리오', '개발자', '디버깅', 'API', '모델', '데모 /']
+    assert not at.radio and not at.sidebar.text_input
     assert not any(word in label for word in forbidden for label in labels)
     assert len(at.get('file_uploader')) == 2
     assert not at.exception
@@ -60,13 +61,16 @@ def test_whitespace_answer_does_not_advance():
     assert not at.exception
 
 
-def test_missing_api_key_keeps_existing_records(monkeypatch):
+def test_first_visit_without_api_key_is_ready_for_rule_based_practice(monkeypatch):
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     at = AppTest.from_file(str(APP), default_timeout=20).run()
+    assert_public_only(at)
+    assert any('실제 AI' in item.value for item in at.info)
     button(at, '예제 자료로 체험').click().run()
-    next(r for r in at.radio if r.label == '연습 방식').set_value('내 OpenAI API 키로 AI 연습').run()
-    assert workspace(at).runs == []
-    assert button(at, '연습 시작 · 첫 질문').disabled and not at.exception
+    assert not button(at, '연습 시작 · 첫 질문').disabled
+    button(at, '연습 시작 · 첫 질문').click().run()
+    assert workspace(at).runs[0]['turns'][0]['mode'] == '데모'
+    assert not at.exception
 
 
 def test_public_cannot_enable_developer_ui_by_query_environment_or_stale_state(monkeypatch):
@@ -109,38 +113,70 @@ def test_topic_change_and_session_selection_still_work():
     assert_public_only(at)
 
 
-def test_visitor_credentials_used_then_disconnect_blocks_owner_fallback(monkeypatch):
+def test_server_ai_works_without_visitor_configuration_and_hides_metadata(public_backend):
     from qa.public_reports import snapshot, markdown
     import json
-    monkeypatch.setenv('OPENAI_API_KEY', 'OWNER_PRIVATE_TOKEN')
-    captured = []
-    original = engine.generate
-    def generate(pages, turns, *args, api_key=None, **kwargs):
-        assert api_key == 'VISITOR_PRIVATE_TOKEN'
-        captured.append('generation')
-        kwargs['demo'] = True
-        result = original(pages, turns, *args, **kwargs)
-        result['mode'] = 'OpenAI'
-        return result
-    def feedback(pages, turn, demo=True, api_key=None):
-        assert not demo and api_key == 'VISITOR_PRIVATE_TOKEN'
-        captured.append('feedback')
-        return dict(accuracy='검토 필요', logic='검토', evidence='검토', next_step='검토')
-    monkeypatch.setattr(engine, 'generate', generate)
-    monkeypatch.setattr(engine, 'feedback', feedback)
     at = AppTest.from_file(str(APP), default_timeout=20).run()
+    at.query_params.update({'model':'arbitrary-model','PUBLIC_AI_ENABLED':'false','api_key':'ignored-key'})
+    at.session_state['api_key'] = 'LEGACY_VISITOR_TOKEN'
     button(at, '예제 자료로 체험').click().run()
-    next(r for r in at.radio if r.label == '연습 방식').set_value('내 OpenAI API 키로 AI 연습').run()
-    next(t for t in at.text_input if t.label == '개인 API 키').set_value('VISITOR_PRIVATE_TOKEN')
-    button(at, '이 키로 연결').click().run()
+    assert 'api_key' not in at.session_state
     button(at, '연습 시작 · 첫 질문').click().run()
+    assert workspace(at).runs[0]['turns'][0]['mode'] == 'OpenAI'
     next(t for t in at.text_area if t.label == '내 답변').set_value('자료의 근거를 확인하겠습니다.')
     button(at, '답변 제출').click().run()
     button(at, '답변 피드백 보기').click().run()
-    report = json.dumps(snapshot(workspace(at).pages, workspace(at).runs)) + markdown(workspace(at).pages,workspace(at).runs)
-    assert 'VISITOR_PRIVATE_TOKEN' not in report and 'OWNER_PRIVATE_TOKEN' not in report
-    button(at, '키 연결 해제').click().run()
-    assert at.session_state['api_key'] == '' and at.session_state['public_api_key_input'] == ''
-    assert button(at, '답변 피드백 보기').disabled
-    assert button(at, '꼬리질문 받기').disabled
-    assert captured == ['generation', 'feedback'] and not at.exception
+    button(at, '답변 피드백 보기').click().run()  # Cached: no extra call.
+    assert len(public_backend['calls']) == 2
+    button(at, '꼬리질문 받기').click().run()
+    assert len(public_backend['calls']) == 3
+    assert len(workspace(at).runs[0]['turns']) == 2
+    report = json.dumps(snapshot(workspace(at).pages, workspace(at).runs)) + markdown(workspace(at).pages, workspace(at).runs)
+    assert 'server-test-key' not in report and 'LEGACY_VISITOR_TOKEN' not in report
+    assert 'prompt_version' not in report and 'gpt-4o-mini' not in report
+    assert_public_only(at)
+
+
+def test_model_failure_is_not_displayed_as_success_and_next_action_is_clearly_rules(public_backend):
+    public_backend['failure']['provider'] = True
+    at = AppTest.from_file(str(APP), default_timeout=20).run()
+    button(at, '예제 자료로 체험').click().run()
+    button(at, '연습 시작 · 첫 질문').click().run()
+    assert not workspace(at).runs and len(public_backend['calls']) == 1
+    assert at.warning and not at.exception
+    assert 'SECRET_PROVIDER_ERROR' not in ' '.join(x.value for x in at.warning)
+    button(at, '연습 시작 · 첫 질문').click().run()
+    assert workspace(at).runs[0]['turns'][0]['mode'] == '데모'
+    assert len(public_backend['calls']) == 1
+    assert any('실제 AI' in x.value for x in at.info)
+
+
+def test_session_quota_survives_practice_reset(public_backend, monkeypatch):
+    monkeypatch.setenv('PUBLIC_AI_SESSION_CALL_LIMIT', '1')
+    at = AppTest.from_file(str(APP), default_timeout=20).run()
+    button(at, '예제 자료로 체험').click().run()
+    button(at, '연습 시작 · 첫 질문').click().run()
+    identity = at.session_state['_public_ai_session'].id
+    button(at, '모든 자료·대화 초기화').click().run()
+    assert at.session_state['_public_ai_session'].id == identity
+    button(at, '예제 자료로 체험').click().run()
+    button(at, '연습 시작 · 첫 질문').click().run()
+    assert not workspace(at).runs and at.warning
+    assert len(public_backend['calls']) == 1
+    button(at, '연습 시작 · 첫 질문').click().run()
+    assert workspace(at).runs[0]['turns'][0]['mode'] == '데모'
+
+
+def test_multiple_browser_sessions_share_global_limit_without_sharing_conversation(public_backend, monkeypatch):
+    monkeypatch.setenv('PUBLIC_AI_TOTAL_CALL_LIMIT', '1')
+    a = AppTest.from_file(str(APP), default_timeout=20).run()
+    button(a, '예제 자료로 체험').click().run()
+    button(a, '연습 시작 · 첫 질문').click().run()
+    b = AppTest.from_file(str(APP), default_timeout=20).run()
+    assert not workspace(b).runs
+    assert b.session_state['_public_ai_session'].id != a.session_state['_public_ai_session'].id
+    button(b, '예제 자료로 체험').click().run()
+    button(b, '연습 시작 · 첫 질문').click().run()
+    assert not workspace(b).runs and b.warning
+    assert len(public_backend['calls']) == 1
+    assert len(workspace(a).runs) == 1 and not a.exception and not b.exception
