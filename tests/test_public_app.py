@@ -11,6 +11,7 @@ def test_public_demo_qa_without_personal_key():
     at = AppTest.from_file(str(APP), default_timeout=20).run()
     assert not at.exception
     assert not any("디버깅" in item.label for item in at.get("tab"))
+    next(x for x in at.checkbox if x.label.startswith("연결 없이")).check().run()
     press(at, "예제 자료로 체험").click().run()
     assert at.session_state["pages"]
     press(at, "연습 시작 · 첫 질문").click().run()
@@ -27,6 +28,7 @@ def test_public_demo_qa_without_personal_key():
 def test_server_key_alone_does_not_enable_paid_requests(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "should-not-be-used-without-opt-in")
     at = AppTest.from_file(str(APP), default_timeout=20).run()
+    next(x for x in at.checkbox if x.label.startswith("연결 없이")).check().run()
     press(at, "예제 자료로 체험").click().run()
     press(at, "연습 시작 · 첫 질문").click().run()
     assert at.session_state["runs"][0]["turns"][0]["mode"] == '데모'

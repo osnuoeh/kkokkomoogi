@@ -14,10 +14,10 @@ def markdown(pages, runs, references, comparison):
                           f'근거 구분: {t["question"]["basis"]}'])
             for c in t['question']['citations']:
                 p = page_map.get(c['page_id'])
-                lines.append(f'> {p.file if p else c["page_id"]} {p.kind if p else ""} {p.number if p else ""}: {c["quote"]}')
+                lines.append(f'> {p.file if p else c["page_id"]} {p.kind if p else ""} {p.number if p else ""}: {c.get("detail", "")+" (시각 해석·자동 검증 안 됨)" if c.get("kind")=="visual" else c["quote"]}')
             lines.extend([f'연결 이유: {t["question"]["connection"]}',
                           f'답변: {t.get("answer") or "미답변"}'])
-            for label in ('feedback','quality','human_scores','human_feedback','errors'):
+            for label in ('feedback','quality','human_scores','human_feedback','errors','answer_review'):
                 if t.get(label):
                     lines.extend([f'{label}:', '```json', json.dumps(t[label],ensure_ascii=False,indent=2), '```'])
     if comparison:
