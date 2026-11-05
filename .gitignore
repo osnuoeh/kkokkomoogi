@@ -32,3 +32,10 @@ output/
 *.pem
 *.key
 .DS_Store
+
+# Private developer datasets and evaluation artifacts (including TXT/Markdown)
+datasets/
+scenarios/
+evaluation_results/
+local_dev/
+dev_evaluation*.md

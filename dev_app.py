@@ -1,29 +1,27 @@
-import hashlib
 import json
 import os
 from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
-from qa.documents import extract, examples
+from qa.documents import examples
+from qa.prompts import PRODUCTION_INSTRUCTIONS
+from qa.ui_common import notify_error, load_uploads
+from qa.dev_guard import require_local_development
+from qa.experiments import execute_suite, parse_scenario, score_rows, comparison_rows
+from qa.experiment_reports import suite_markdown, suite_csv, coverage_csv
 from qa.history import load_history, sample_csv, csv_bytes
 from qa.engine import generate, feedback, quality, version, BASE_PROMPT
 from qa.evaluation import compare
 from qa.models import METRICS
 from qa.reports import markdown, evaluation_csv
 
-st.set_page_config(page_title='꼬리에 꼬리 물기', page_icon='💬', layout='wide')
+st.set_page_config(page_title='개발자 검증 도구', page_icon='🧪', layout='wide')
+require_local_development()
 s = st.session_state
-for key, value in {'pages':[], 'references':[], 'runs':[], 'active':0, 'prompt':'',
+for key, value in {'pages':[], 'references':[], 'runs':[], 'active':0, 'prompt':PRODUCTION_INSTRUCTIONS,
                    'data_label':'사용자 업로드 자료 (검증 전)', 'comparison':None, 'revision':0}.items():
     if key not in s:
         s[key] = value
-
-def notify_error(exc):
-    # Never echo SDK errors, which can include request metadata or credentials.
-    if isinstance(exc, ValueError) and not type(exc).__module__.startswith('pydantic'):
-        st.error(str(exc))
-    else:
-        st.error('처리하지 못했습니다. 파일 형식·암호화 여부 또는 API 연결·모델 지원·사용량을 확인한 뒤 다시 시도해 주세요. 기존 기록은 유지됩니다.')
 
 def current_run():
     return s.runs[s.active] if s.runs else None
@@ -39,7 +37,8 @@ def first_question(name, demo, audience, difficulty, topic=''):
     new_run(name)
     current_run()['turns'].append(t)
 
-st.title('꼬리에 꼬리 물기')
+st.title('개발자 전용 Evaluation & Debugging')
+st.warning('개발용 실험 결과입니다. 실제 사용자 앱의 품질을 입증한 결과가 아닙니다.')
 st.caption('발표의 주장, 근거, 빈틈을 한 질문씩 확인하는 Q&A 연습실')
 with st.sidebar:
     st.subheader('연습 설정')
@@ -58,7 +57,7 @@ with st.sidebar:
         s.clear()
         st.rerun()
 
-tabs = st.tabs(['자료 관리', 'Q&A 연습', '질문 검증 및 디버깅', '기록 다운로드'])
+tabs = st.tabs(['자료 관리', 'Q&A 연습', '질문 검증 및 디버깅', '기록 다운로드', '자동 반복 평가'])
 with tabs[0]:
     st.subheader('1. 발표와 참고 문헌 등록')
     presentations = st.file_uploader('발표 자료 PPTX / PDF', type=['pptx','pdf'], accept_multiple_files=True)
@@ -66,23 +65,12 @@ with tabs[0]:
     st.caption('파일당 25MB·500페이지 이하. 표 텍스트는 추출하지만 이미지·수식·그래프의 시각적 의미는 분석하지 않습니다.')
     if st.button('업로드한 자료 적용', disabled=not presentations):
         try:
-            pages, warnings = [], []
-            fingerprints = set()
-            for role, uploads in [('발표',presentations), ('참고',papers)]:
-                for f in uploads:
-                    fingerprint = (role, f.name, hashlib.sha256(f.getvalue()).hexdigest())
-                    if fingerprint in fingerprints:
-                        continue
-                    fingerprints.add(fingerprint)
-                    extracted, notices = extract(f.name, f.getvalue(), role)
-                    pages.extend(extracted)
-                    warnings.extend(notices)
-            if not any(p.text and p.role == '발표' for p in pages):
-                raise ValueError('발표 자료에서 텍스트를 추출하지 못했습니다. 스캔 PDF는 OCR 처리 후 다시 업로드해 주세요.')
+            pages, warnings = load_uploads(presentations, papers)
             s.pages = pages
             s.runs, s.references, s.comparison, s.active = [], [], None, 0
             s.data_label = '사용자 업로드 자료 (AI 보조 평가, 실제 타당성 검증 전)'
             s.revision += 1
+            s.pop('suite', None)
             for w in warnings:
                 st.warning(w)
             st.success('자료를 적용했습니다. 자료 혼합을 방지하기 위해 이전 실험과 과거 질문 목록을 초기화했습니다.')
@@ -94,6 +82,7 @@ with tabs[0]:
         s.runs, s.comparison, s.active = [], None, 0
         s.data_label = '가상 예제 데이터 — 실제 발표 검증 결과 아님'
         s.revision += 1
+        s.pop('suite', None)
         st.success('가상의 과적합 발표·문헌·질문 예제를 불러왔습니다.')
     if s.pages:
         st.info(s.data_label)
@@ -111,6 +100,7 @@ with tabs[0]:
         try:
             refs = [r for f in files for r in load_history(f.name, f.getvalue())]
             s.references, s.comparison = refs, None
+            s.pop('suite', None)
             st.success(f'{len(refs)}개 질문을 평가 전용 목록으로 저장했습니다.')
         except Exception as exc:
             notify_error(exc)
@@ -298,3 +288,65 @@ with tabs[3]:
                        'session.json','application/json')
     st.caption('JSON은 분석 및 보관용입니다. 현재 버전에서는 세션 복원 업로드를 지원하지 않습니다.')
     st.download_button('예시 질문 CSV',sample_csv(),'example_questions.csv','text/csv',key='template_again')
+
+with tabs[4]:
+    st.subheader('같은 조건으로 수정 전후 자동 반복 평가')
+    st.caption('답변 없이 독립 첫 질문을 반복 생성하거나, 준비한 답변을 순서대로 재생합니다. 모든 생성이 끝난 뒤 독립 평가합니다.')
+    dataset_name = st.text_input('데이터셋 이름', value='로컬 검증 데이터셋')
+    repeats = st.number_input('버전별 반복 횟수', min_value=1, max_value=5, value=2)
+    baseline = st.text_area('기준 생성 지침', value=PRODUCTION_INSTRUCTIONS, max_chars=6000)
+    candidate = st.text_area('후보 생성 지침', value=s.prompt, max_chars=6000)
+    st.caption(f'기준 버전: {version(baseline)} / 후보 버전: {version(candidate)}')
+    replay = st.checkbox('준비된 발표자 답변 시나리오 재생')
+    scenario_file = st.file_uploader('발표자 답변 시나리오 JSON (평가 질문과 별도)', type=['json'])
+    st.caption('형식: [{"answer":"첫 질문 후 재생할 답변", "note":"개발자 메모"}]. 1~5개 답변만 지원합니다. note와 아직 재생하지 않은 답변은 생성기에 전달하지 않습니다.')
+    scenario_example = json.dumps([{'answer':'검증 손실이 증가했기 때문에 과적합을 의심합니다.', 'note':'가상의 시연 답변'},
+                                   {'answer':'외부 데이터 검증이 없어 일반화를 단정할 수 없습니다.', 'note':'가상의 시연 답변'}],ensure_ascii=False,indent=2)
+    st.download_button('가상 답변 시나리오 예시 다운로드',scenario_example,'example_scenario.json','application/json')
+    steps = []
+    scenario_valid = not replay
+    if replay:
+        st.warning('시나리오 답변은 고정 재생입니다. 생성된 질문과 답변이 맞는지 검토하세요. 실제 사용자 답변 기반 품질과 동일하게 해석하지 마세요.')
+        if scenario_file:
+            try:
+                steps = parse_scenario(scenario_file.getvalue())
+                scenario_valid = True
+            except Exception as exc:
+                notify_error(exc)
+    calls = 2 * int(repeats) * (2*(len(steps)+1)+1)
+    st.caption(f'최대 {calls}회 모델 요청: 생성·질문별 품질 평가·실험별 기존 질문 비교 포함. 데모는 외부 요청이 없습니다.')
+    if st.button('자동 반복 평가 실행',disabled=not s.pages or not s.references or not scenario_valid):
+        try:
+            bar = st.progress(0.0)
+            s.suite = execute_suite(s.pages,s.references,baseline,candidate,int(repeats),audience,difficulty,
+                                    demo,steps,dataset_name,s.data_label,bar.progress)
+            st.success('개발용 반복 평가를 완료했습니다. 오류와 미채점도 결과에 포함합니다.')
+        except Exception as exc:
+            notify_error(exc)
+    if s.get('suite'):
+        suite = s.suite
+        st.warning(suite['purpose'])
+        st.caption(f'결과 데이터셋: {suite["dataset"]} / 고정 조건: {suite["condition_id"][:16]}')
+        if suite['errors']:
+            st.json(suite['errors'])
+        df = pd.DataFrame(score_rows(suite))
+        st.dataframe(df,hide_index=True)
+        plot = df.dropna(subset=['점수 평균'])
+        if not plot.empty:
+            st.bar_chart(plot.pivot_table(index='항목',columns='구분',values='점수 평균',aggfunc='mean'))
+        if suite.get('exact_duplicates'):
+            st.write('문장 동일 중복 후보 (의미적 중복 판정은 별도 검토)')
+            st.dataframe(pd.DataFrame(suite['exact_duplicates']),hide_index=True)
+        st.caption('데모의 점수는 모두 검토 필요입니다. 같은 조건이어도 모델 출력은 달라질 수 있으며 통계적 개선을 입증하지 않습니다.')
+        comparisons = comparison_rows(suite,s.references)
+        if comparisons:
+            st.dataframe(pd.DataFrame(comparisons),hide_index=True)
+        for r in suite['runs']:
+            with st.expander(f'{r["name"]} · {r["answer_source"]} · {r["status"]}'):
+                for i,t in enumerate(r['turns'],1):
+                    st.write(f'Q{i}. {t["question"]["question"]}')
+                    st.text('재생 답변: '+(t['answer'] or '(답변 없음)'))
+                    st.caption('근거 구분: '+t['question']['basis'])
+        st.download_button('자동 평가 Markdown',suite_markdown(s.pages,s.references,suite),'dev_evaluation.md','text/markdown')
+        st.download_button('자동 평가 CSV',suite_csv(suite),'dev_evaluation.csv','text/csv')
+        st.download_button('개념 비교 CSV',coverage_csv(suite,s.references),'dev_coverage.csv','text/csv')
