@@ -128,9 +128,9 @@ def test_generator_allowlist_prevents_evaluation_leakage(monkeypatch,pages):
     def fake(system,payload,schema,api_key=None):
         serialized=json.dumps(payload,ensure_ascii=False)
         assert marker not in serialized and marker not in system
-        assert set(payload)=={'documents','conversation','audience','difficulty','new_topic'}
+        assert set(payload)=={'documents','conversation','audience','difficulty','new_topic','presentation_map','latest_answer_claim'}
         assert payload['conversation'][0]['answer'] == previous['answer']
-        return Question(question='이 주장을 검증할 근거는 무엇인가요?',focus='검증',connection='답변의 근거 확인',basis='모델 추론',citations=[])
+        return Question(question=f'답변의 “{payload["latest_answer_claim"]}”를 검증할 근거는 무엇인가요?',focus='검증',connection='답변의 근거 확인',basis='모델 추론',citations=[])
     monkeypatch.setattr(engine,'llm',fake)
     result=engine.generate(pages,[previous],demo=False)
     assert result['question']['basis'] == '근거 부족'
