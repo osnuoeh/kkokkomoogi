@@ -48,7 +48,9 @@ def public_backend(monkeypatch):
             return httpx.Response(500, json={'error': {'message': 'SECRET_PROVIDER_ERROR', 'type': 'server_error'}})
         schema = data['response_format']['json_schema']['name']
         if schema == 'Question':
-            content = {'question': '자료에서 이 주장을 뒷받침하는 근거는 무엇인가요?', 'focus': '근거',
+            payload=json.loads(data['messages'][1]['content'])
+            anchor=payload.get('latest_answer_claim','')
+            content = {'question': (f'답변의 “{anchor}”를 지지하는 근거는 무엇인가요?' if anchor else '자료에서 이 주장을 뒷받침하는 근거는 무엇인가요?'), 'focus': '근거',
                        'connection': '직전 답변의 근거 확인', 'basis': '근거 부족', 'citations': []}
         elif schema == 'Feedback':
             content = {'accuracy': '자료로 확인한 범위에서 검토 필요', 'logic': '주장과 근거를 연결해 주세요.',

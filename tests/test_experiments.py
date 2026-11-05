@@ -39,7 +39,7 @@ def test_scenario_replay_future_answers_notes_holdouts_never_reach_generation(mo
         if schema is Question:
             assert 'HOLDOUT_' not in data and 'SECRET_NOTE' not in data
             generator_requests.append(payload)
-            return Question(question='주장의 근거는 무엇인가요?', focus='근거', connection='최근 답변', basis='근거 부족', citations=[])
+            return Question(question=(f'답변의 “{payload["latest_answer_claim"]}”의 근거는 무엇인가요?' if payload.get('latest_answer_claim') else '주장의 근거는 무엇인가요?'), focus='근거', connection='최근 답변', basis='근거 부족', citations=[])
         judge_requests.append(payload)
         # Both variants' full generation must finish before the first judgment.
         assert len(generator_requests) == 6

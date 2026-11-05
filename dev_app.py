@@ -216,6 +216,8 @@ with tabs[2]:
         idx = st.selectbox('검토할 생성 질문', range(len(turns)), format_func=lambda i:f'Q{i+1}. {turns[i]["question"]["question"][:80]}')
         target = turns[idx]
         st.text(target['question']['question'])
+        with st.expander('페이지 선택·주제 후보·답변 연결 근거'):
+            st.json(target.get('selection', {}))
         if st.button('선택 질문 품질 평가'):
             try:
                 with st.spinner('원문과 이전 답변을 바탕으로 평가합니다…'):

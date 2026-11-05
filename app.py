@@ -47,7 +47,7 @@ with st.sidebar:
 if practice_session.pause_message:
     st.warning(practice_session.pause_message)
 if public_ai.is_demo(settings, practice_session):
-    st.info("현재는 규칙 기반 체험을 제공합니다. 실제 AI가 답변을 분석하는 기능은 아닙니다.")
+    st.info("현재는 문장 단서에 따른 규칙 기반 체험을 제공합니다. 실제 AI가 과학적 의미나 답변의 타당성을 분석하는 기능은 아닙니다.")
 
 st.subheader("1. 발표 자료 준비")
 presentations = st.file_uploader("발표 PDF 또는 PPTX", type=["pdf", "pptx"], accept_multiple_files=True)
