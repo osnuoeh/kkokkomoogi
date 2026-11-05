@@ -67,3 +67,77 @@ def public_backend(monkeypatch):
         return original(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(model_handler)))
     monkeypatch.setattr(openai, 'OpenAI', create_client)
     return {'redis': redis, 'calls': calls, 'failure': failure, 'env': settings}
+
+
+@pytest.fixture
+def gemini_backend(monkeypatch):
+    """Real google-genai SDK over mock HTTP. No real Google key/request."""
+    from google import genai
+    from google.genai import types
+    from qa import gemini_provider as gp, gemini_access as access
+    state={'requests':[], 'error':None, 'missing_model':False,'review':'supported'}
+    original=genai.Client
+    original_connection=access.Connection
+    monkeypatch.setattr(access,'Connection',lambda:original_connection(meter=gp.Meter(interval=0)))
+    def handler(request):
+        key=request.headers.get('x-goog-api-key')
+        assert key and key not in ('OWNER_KEY','SERVER_KEY')
+        assert 'key=' not in str(request.url)
+        if key=='invalid-key':
+            return httpx.Response(400,json={'error':{'code':400,'message':'API_KEY_INVALID secret-details','status':'INVALID_ARGUMENT'}})
+        path=request.url.path
+        if request.method=='GET':
+            if path.endswith('/models'):
+                return httpx.Response(200,json={'models':[{'name':'models/gemini-3.6-flash','displayName':'대체 빠른 모델','supportedGenerationMethods':['generateContent']}]})
+            if state['missing_model'] and path.endswith(gp.DEFAULT_MODEL):
+                return httpx.Response(404,json={'error':{'code':404,'message':'missing','status':'NOT_FOUND'}})
+            return httpx.Response(200,json={'name':'models/'+path.split('/')[-1],'supportedGenerationMethods':['generateContent']})
+        body=json.loads(request.content)
+        parts=body['contents'][0]['parts']
+        payload=json.loads(parts[0]['text'])
+        schema=body['generationConfig']['responseJsonSchema']['title']
+        state['requests'].append({'key':key,'schema':schema,'body':body,'payload':payload})
+        if state['error']:
+            code=state['error']
+            return httpx.Response(code,json={'error':{'code':code,'message':'SECRET_PROVIDER_DETAILS','status':'RESOURCE_EXHAUSTED' if code==429 else 'INTERNAL'}})
+        documents=payload.get('documents',[])
+        citation=next(({'page_id':p['id'],'quote':p['text'][:100]} for p in documents if p.get('text')),None)
+        citations=[citation] if citation else []
+        if schema=='AnswerReview':
+            answer=payload['answer']
+            status=state['review']
+            content={'relevance':'off_topic' if status=='off_topic' else 'partial' if status=='partial' else 'direct',
+                     'accuracy':'incorrect' if status=='incorrect' else 'uncertain' if status=='partial' else 'supported',
+                     'claim':answer,'explanation':'SEI 형성 질문에 dendrite 관찰법만 답해 원래 반응 설명이 빠졌습니다.' if status=='off_topic' else '원문 범위에서 검토했습니다.',
+                     'missing':['계면 반응의 적용 조건'] if status=='partial' else [],
+                     'next_focus':'적용 조건과 한계' if status=='supported' else 'SEI 형성 반응',
+                     'action':'retry' if status in ('off_topic','incorrect') else 'clarify' if status=='partial' else 'deepen',
+                     'repair_question':'SEI 형성 반응과 dendrite 관찰을 구분해 원래 질문에 답해 주시겠어요?', 'citations':citations}
+        elif schema=='Question':
+            anchor=payload.get('latest_answer_claim','')
+            focus=(payload.get('answer_review') or {}).get('next_focus','SEI 형성 반응')
+            visual=any('inlineData' in p for p in parts)
+            if visual:
+                label=next(p['text'] for p in parts[1:] if 'text' in p)
+                page_id=label.split('page_id=')[1]
+                citations=[{'page_id':page_id,'quote':'','kind':'visual','detail':'곡선의 축 단위가 작아 해석에 불확실성이 있습니다.'}]
+            content={'question':'고전압 조건에서 이 결론이 유지되지 않는 예외는 무엇인가요?' if anchor else 'SEI 형성에서 전해액 환원과 비가역 용량 손실은 어떻게 연결되나요?',
+                     'focus':focus,'connection':anchor or '발표와 참고 문헌의 반응 설명 연결', 'basis':'모델 추론','citations':citations}
+        elif schema=='Quality':
+            from qa.models import METRICS
+            content={'grades':[{'metric':m,'score':None,'reason':'모의 평가'} for m in METRICS], 'problems':[],'suggestion':'검토'}
+        elif schema=='Comparison':
+            content={'matches':[{'reference_index':i,'generated_indices':[],'status':'검토 필요','concept':'SEI','reason':'모의 비교'} for i,_ in enumerate(payload['references'])],'limitations':'모의 결과'}
+        else:
+            raise AssertionError(schema)
+        return httpx.Response(200,json={'candidates':[{'content':{'role':'model','parts':[{'text':json.dumps(content,ensure_ascii=False)}]},'finishReason':'STOP'}],
+                                       'usageMetadata':{'promptTokenCount':100,'candidatesTokenCount':100,'totalTokenCount':200}})
+    def factory(**kwargs):
+        # Exercise the production client factory, preserving its explicit key,
+        # vertexai=False, timeout and retry policy; replace only HTTP transport.
+        assert kwargs['vertexai'] is False and kwargs['api_key']
+        assert kwargs['http_options'].retry_options.attempts == 1
+        kwargs['http_options'].httpx_client=httpx.Client(transport=httpx.MockTransport(handler))
+        return original(**kwargs)
+    monkeypatch.setattr(genai,'Client',factory)
+    return state

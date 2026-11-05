@@ -10,6 +10,8 @@ class Page(BaseModel):
     kind: str
     text: str
 class Citation(BaseModel):
+    kind: Literal['text','visual'] = 'text'
+    detail: str = ''
     page_id: str
     quote: str
 class Question(BaseModel):
@@ -50,3 +52,15 @@ class Historical(BaseModel):
     feedback: str = ''
     reference: str = ''
     page: str = ''
+
+
+class AnswerReview(BaseModel):
+    relevance: Literal['direct','partial','off_topic']
+    accuracy: Literal['supported','incorrect','uncertain']
+    claim: str
+    explanation: str
+    missing: list[str]
+    next_focus: str
+    action: Literal['retry','clarify','deepen']
+    repair_question: str
+    citations: list[Citation]

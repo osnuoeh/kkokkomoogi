@@ -12,9 +12,9 @@ def snapshot(pages, runs):
                 'audience', 'difficulty')})
         for turn in turns:
             feedback_mode = turn.get('feedback_mode') or turn['mode']
-            turn['mode'] = 'AI' if turn['mode'] == 'OpenAI' else '규칙 기반 체험 (실제 AI 아님)'
+            turn['mode'] = 'AI' if turn['mode'] in ('OpenAI','Gemini') else '규칙 기반 체험 (실제 AI 아님)'
             if turn['feedback']:
-                turn['feedback_mode'] = 'AI 보조 피드백' if feedback_mode == 'OpenAI' else '규칙 기반 체험 피드백'
+                turn['feedback_mode'] = 'AI 보조 피드백' if feedback_mode in ('OpenAI','Gemini') else '규칙 기반 체험 피드백'
         safe_runs.append({'name': run['name'], 'data_label': run.get('data_label') or '사용자 Q&A 기록', 'turns': turns})
     return {'schema_version': 2, 'purpose': '사용자 Q&A 연습 기록',
             'documents': [{'file': p.file, 'role': p.role, 'number': p.number, 'kind': p.kind}
@@ -36,7 +36,7 @@ def markdown(pages, runs):
             for c in q['citations']:
                 p = page_map.get(c['page_id'])
                 if p:
-                    lines.append(f'> {p.file} · {p.kind} {p.number}: {c["quote"]}')
+                    lines.append(f'> {p.file} · {p.kind} {p.number}: {c.get("detail", "")+" (시각 해석·자동 검증 안 됨)" if c.get("kind")=="visual" else c["quote"]}')
             lines.append(f'답변: {turn["answer"] or "미답변"}')
             if turn['feedback']:
                 lines.extend(['피드백:', '```json', json.dumps(turn['feedback'], ensure_ascii=False, indent=2), '```'])
