@@ -1,7 +1,7 @@
 from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
-APP=Path(__file__).parents[1]/'app.py'
+APP=Path(__file__).parents[1]/'dev_app.py'
 
 def button(at,label):
     return next(b for b in at.button if b.label==label)
